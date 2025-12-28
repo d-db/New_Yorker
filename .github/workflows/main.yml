@@ -1,4 +1,5 @@
 name: Update Repo
+
 on:
   workflow_dispatch:
     inputs:
@@ -19,43 +20,69 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y xdg-utils xz-utils
           sudo apt-get install -y libxcb-cursor0 libxcb-xinerama0 libegl1 libopengl0
+
       - name: Install Calibre
         run: |
           sudo -v && wget -nv -O- https://download.calibre-ebook.com/linux-installer.sh | sudo sh /dev/stdin
+
       - name: Download zip file
         run: |
           git clone https://gitlab.com/Monkfishare/2025.git temp-repo
-          cp -R temp-repo/${{ env.TARGET_DIR }} .
+          rm -rf "${{ env.TARGET_DIR }}"
+          cp -R "temp-repo/${{ env.TARGET_DIR }}" .
           rm -rf temp-repo
+
       - name: Convert EPUB to AZW3
         run: |
+          set -e
+          if [ ! -d "${{ env.TARGET_DIR }}" ]; then
+            echo "Target dir '${{ env.TARGET_DIR }}' not found."
+            exit 1
+          fi
+
+          EPUB_COUNT=$(find "${{ env.TARGET_DIR }}" -name "*.epub" -type f | wc -l | tr -d ' ')
+          echo "Found ${EPUB_COUNT} EPUB files."
+
+          if [ "${EPUB_COUNT}" = "0" ]; then
+            echo "No EPUB files found. Skipping conversion."
+            exit 0
+          fi
+
           if [ "${{ github.event.inputs.convert_count }}" = "all" ]; then
-            find ${{ env.TARGET_DIR }} -name "*.epub" -type f | sort -r | while read file; do
+            echo "Converting ALL EPUB files to AZW3..."
+            find "${{ env.TARGET_DIR }}" -name "*.epub" -type f | sort -r | while read -r file; do
               dir=$(dirname "$file")
               basename=$(basename "$file" .epub)
               output="$dir/$basename.azw3"
+              echo "Converting: $file -> $output"
               ebook-convert "$file" "$output"
             done
           else
-            find ${{ env.TARGET_DIR }} -name "*.epub" -type f | sort -r | head -${{ github.event.inputs.convert_count }} | while read file; do
+            echo "Converting latest ${{ github.event.inputs.convert_count }} EPUB file(s) to AZW3..."
+            find "${{ env.TARGET_DIR }}" -name "*.epub" -type f | sort -r | head -n "${{ github.event.inputs.convert_count }}" | while read -r file; do
               dir=$(dirname "$file")
               basename=$(basename "$file" .epub)
               output="$dir/$basename.azw3"
+              echo "Converting: $file -> $output"
               ebook-convert "$file" "$output"
             done
           fi
-      - name: Commit and Push changes
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add ${{ env.TARGET_DIR }}
-          git commit -m "Initial commit"
-          git push
+
+      - name: Upload EPUB/AZW3 as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: new_yorker_files
+          path: |
+            NY/**/*.epub
+            NY/**/*.azw3
+
